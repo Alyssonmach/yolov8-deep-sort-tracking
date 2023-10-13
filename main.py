@@ -2,13 +2,26 @@
 
 # importação dos pacotes utilitários
 import cv2
+import numpy as np
 import os, random
 from tracker import Tracker
 from ultralytics import YOLO
 
+def recortar_imagem_pela_caixa(imagem, caixa):
+    # Certifique-se de que a caixa esteja no formato [x1, y1, x2, y2]
+    x1, y1, x2, y2 = caixa
+
+    # Crie uma máscara de zeros com as mesmas dimensões da imagem
+    mascara = np.zeros(imagem.shape, dtype=np.uint8)
+
+    # Defina a região dentro da caixa delimitadora como a imagem na máscara
+    mascara[y1:y2, x1:x2] = imagem[y1:y2, x1:x2]
+
+    return mascara
+
 time = 0
-list_track_id = list()
 id_select = 0
+bbox_select = list()
 
 # vídeo para realização da inferência
 video_path = os.path.join('.', 'data', 'people.mp4')
@@ -25,7 +38,7 @@ cap_out = cv2.VideoWriter(video_out_path, cv2.VideoWriter_fourcc(*'MP4V'), cap.g
                           (frame.shape[1], frame.shape[0]))
 
 # carregando os parâmetros pré-treinados na arquitetura da YOLOv8
-model = YOLO("modelos-salvos/yolov8n.pt")
+model = YOLO("modelos-salvos/yolov8n-seg.pt")
 
 # inicializando o módulo de rastreamento do deep-sort
 tracker = Tracker()
@@ -44,9 +57,13 @@ while ret:
 
     # adicionando as informações da caixa delimitadora em uma lista
     for result in results:
-        detections = []
+        detections = list()
         # pegando as informações do modelo da YOLO
-        for r in result.boxes.data.tolist():
+        for index, r in enumerate(result.boxes.data.tolist()):
+            seg_map = result.masks.data[index].cpu().numpy()
+            seg_map =  np.expand_dims(seg_map, 0).repeat(3, axis = 0)
+            seg_map = np.moveaxis(seg_map, 0, -1)
+            seg_map = cv2.resize(seg_map, [frame.shape[1], frame.shape[0]])
             x1, y1, x2, y2, score, class_id = r
             x1 = int(x1)
             x2 = int(x2)
@@ -56,6 +73,8 @@ while ret:
             # adicionando a lista caso a detecção tenha um determinado grau de confiabilidade
             if score > detection_threshold:
                 detections.append([x1, y1, x2, y2, score])
+                if index == 0: segmentations = seg_map
+                else: segmentations += seg_map
 
         # passando as informações das caixas delimitadoras no frame atual para o módulo de rastreamento
         tracker.update(frame, detections)
@@ -67,7 +86,6 @@ while ret:
             track_id = track.track_id
             x1, y1 = int(x1), int(y1)
             x2, y2 = int(x2), int(y2)
-            list_track_id.append(track_id)
 
             if id_select == 0:
                 # desenhando a caixa delimitadora no frame
@@ -76,13 +94,15 @@ while ret:
                 cv2.putText(frame, f'Torre | ID: {track_id}', (x1, y1 - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
             elif id_select == track_id:
+                bbox_select = [x1, y1, x2, y2]
                 # desenhando a caixa delimitadora no frame
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (colors[track_id % len(colors)]), 3)
                 # identificando textualmente a detecção com rastreamento feita
                 cv2.putText(frame, f'Torre | ID: {track_id}', (x1, y1 - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
-
-
+    segmentations *= 255
+    if id_select != 0: segmentations = recortar_imagem_pela_caixa(segmentations, bbox_select)
+    frame = cv2.addWeighted(frame, 0.7, segmentations.astype('uint8'), 0.3, 0)
     # gravando o frame para montar o vídeo a ser salvo
     cap_out.write(frame)
     # visualizando as detecções com rastreamento feitas
