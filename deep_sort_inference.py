@@ -177,7 +177,7 @@ while ret:
     # ativa o modo de digitar o identificados [i --> ID]
     elif key == ord('i'): select_mode = True
     # reseta o ID selecionado [r --> reset]
-    elif key == ord('r'): id_select = -1
+    elif key == ord('r'): id_select, tracker = -1, Tracker()
     # habilita/desabilita a máscara de segmentação [m --> mask]
     elif key == ord('m'): verify_seg += 1
     # finaliza o programa [q --> quit]
