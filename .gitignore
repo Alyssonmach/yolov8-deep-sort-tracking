@@ -159,6 +159,8 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# arquivos grandes a serem ignorados
-out.mp4
-yolov8n.pt
+# arquivos a serem ignorados
+deep-sort/*
+modelos-salvos/*
+videos-rastreamento/*
+videos-teste/*
