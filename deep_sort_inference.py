@@ -33,7 +33,8 @@ cap_out = cv2.VideoWriter(video_out_path, cv2.VideoWriter_fourcc(*'MP4V'), cap.g
                           (frame.shape[1], frame.shape[0]))
 
 # carregando os parâmetros pré-treinados na arquitetura da YOLOv8
-model = YOLO("modelos-salvos/yolov8n-seg.pt")
+model_seg = YOLO("modelos-salvos/yolov8n-seg.pt")
+model_without_seg = YOLO("modelos-salvos/yolov8n.pt")
 
 # inicializando o módulo de rastreamento do deep-sort
 tracker = Tracker()
@@ -42,11 +43,14 @@ tracker = Tracker()
 colors = [(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)) for j in range(10)]
 
 # variável auxiliar para adicionar o tempo de espera entre um frame e outro
-time = 1
+time = 120
 # variável auxiliar para adicionar o ID selecionado pelo usuário 
 id_select = 0
 # criando uma variável auxiliar para adicionar as coordenadas da caixa delimitadora selecionada
 bbox_select = list()
+riding_id = ''
+select_mode = False
+verify_seg = 1
 
 # enquanto ainda houver um frame a ser detectado
 while ret:
@@ -54,30 +58,34 @@ while ret:
     if id_select != 0:
 
         # realizando a inferência com o modelo da YOLO no frame em análise
-        results = model(frame, verbose = False)
+        if verify_seg % 2:
+            results = model_seg(frame, verbose = False)
+        else: 
+            results = model_without_seg(frame, verbose = False)
 
         # adicionando as informações da caixa delimitadora em uma lista
         for result in results:
             detections = list()
             # pegando as informações do modelo da YOLO
             for index, r in enumerate(result.boxes.data.tolist()):
-                seg_map = result.masks.data[index].cpu().numpy()
-                seg_map = segmentation_map_corrections(seg_map = seg_map, new_shape = frame.shape,
-                                                    color = SEGMENTATION_COLOR)
+                if verify_seg % 2:
+                    seg_map = result.masks.data[index].cpu().numpy()
+                    seg_map = segmentation_map_corrections(seg_map = seg_map, new_shape = frame.shape,
+                                                           color = SEGMENTATION_COLOR)
                 x1, y1, x2, y2, score, class_id = r
                 [x1, y1, x2, y2] = bbox_corrections(bbox = [x1, y1, x2, y2])
                 # adicionando a lista caso a detecção tenha um determinado grau de confiabilidade
                 if score > DETECTION_THRESHOLD:
                     detections.append([x1, y1, x2, y2, score])
-                    if index == 0: segmentations = seg_map
-                    else: segmentations += seg_map
+                    if verify_seg % 2:
+                        if index == 0: segmentations = seg_map
+                        else: segmentations += seg_map
 
             # passando as informações das caixas delimitadoras no frame atual para o módulo de rastreamento
             tracker.update(frame, detections)
 
             # a partir do módulo de rastreamento, recuperar as informações das detecções para desenhar no frame
             for track in tracker.tracks:
-                id_view = 0
                 bbox = track.bbox
                 x1, y1, x2, y2 = bbox
                 track_id = track.track_id
@@ -90,7 +98,6 @@ while ret:
                     # identificando textualmente a detecção com rastreamento feita
                     cv2.putText(frame, f'Torre | ID: {track_id}', (x1, y1 - 10), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, BBOX_TEXT_COLOR, 2)
-                    id_view += 1
                 else:
                     # desenhando a caixa delimitadora no frame
                     cv2.rectangle(frame, (x1, y1), (x2, y2), BBOX_UNSELECTED_COLOR, 3)
@@ -99,7 +106,7 @@ while ret:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, BBOX_TEXT_COLOR, 2)
                     bbox_select = [x1, y1, x2, y2]
 
-        if id_select == -1 or id_view == 0: 
+        if id_select == -1: 
             print_id_select, id_select = 'Nenhum', -1
             COLOR_ID_TEXT = [0, 0, 255]
         else: 
@@ -109,7 +116,8 @@ while ret:
         cv2.putText(frame, f'ID: {print_id_select}', (5, 22), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, COLOR_ID_TEXT, 2)
         
-        frame = cv2.addWeighted(frame, 0.7, segmentations.astype('uint8'), 0.3, 0)
+        if verify_seg % 2:
+            frame = cv2.addWeighted(frame, 0.7, segmentations.astype('uint8'), 0.3, 0)
 
     cv2.putText(frame, 'PROJETO ESFERAS - CEMIG', (frame.shape[1] - 360, frame.shape[0] - 10), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
@@ -121,10 +129,19 @@ while ret:
     # aguardando uma entrada do usuário
     key = cv2.waitKey(time)
 
-    if key == ord('c'): time = 1
+    if select_mode == True:
+        if key != -1:
+            riding_id += chr(key)
+        if len(riding_id) == 2:
+            id_select = int(riding_id)
+            riding_id = ''
+            select_mode = False
+
+    if key == ord('c'): time = 120
     elif key == ord('s'): time = 0
-    elif key == ord('i'): id_select = int(input('selecione um ID: '))
+    elif key == ord('i'): select_mode = True
     elif key == ord('r'): id_select = -1
+    elif key == ord('m'): verify_seg += 1
     elif key == ord('q'): break
     elif key == -1: pass
 
