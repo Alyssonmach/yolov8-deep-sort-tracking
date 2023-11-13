@@ -16,9 +16,9 @@ BBOX_TEXT_COLOR = [0, 0, 0]
 DETECTION_THRESHOLD = 0.5
 
 # vídeo para realização de testes de inferência
-video_path = os.path.join('.', 'data', 'people.mp4')
+video_path = os.path.join('.', 'videos-rastreamento', 'video-rastreio4.mkv')
 # local onde os vídeos com as inferências serão salvos
-video_out_path = os.path.join('.', 'videos-teste', 'out.mp4')
+video_out_path = os.path.join('.', 'videos-teste', 'video-rastreio4.mp4')
 
 # inicializando o módulo de captura de vídeo do opencv (0 para acessar a câmera)
 cap = cv2.VideoCapture(0)
