@@ -1,7 +1,8 @@
 # importação dos pacotes utilitários
+import argparse
 import os
 import cv2
-import random
+import numpy as np
 from tracker import Tracker
 from ultralytics import YOLO
 from utils import bbox_corrections
@@ -15,23 +16,44 @@ BBOX_TEXT_COLOR = [0, 0, 0]
 # definindo um limiar de confiabilidade na predição feita pelo classificador da YOLO
 DETECTION_THRESHOLD = 0.5
 
-# vídeo para realização de testes de inferência
-video_path = os.path.join('.', 'videos-rastreamento', 'video-rastreio4.mkv')
-# local onde os vídeos com as inferências serão salvos
-video_out_path = os.path.join('.', 'videos-teste', 'video-rastreio4.mp4')
+def parse_args():
+    parser = argparse.ArgumentParser(description='Detecção e rastreamento com YOLO e Deep SORT.')
+    parser.add_argument('--source', default='data/people.mp4',
+                        help='Caminho do vídeo ou índice da câmera (padrão: data/people.mp4).')
+    parser.add_argument('--output', default='output/tracked.mp4',
+                        help='Caminho do vídeo de saída (padrão: output/tracked.mp4).')
+    parser.add_argument('--seg-model', default='yolov8n-seg.pt',
+                        help='Pesos do modelo YOLO de segmentação.')
+    parser.add_argument('--detect-model', default='yolov8n.pt',
+                        help='Pesos do modelo YOLO de detecção.')
+    return parser.parse_args()
+
+
+args = parse_args()
+source = int(args.source) if args.source.isdecimal() else args.source
+os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
 
 # inicializando o módulo de captura de vídeo do opencv (0 para acessar a câmera)
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(source)
+if not cap.isOpened():
+    raise SystemExit(f'Não foi possível abrir a origem de vídeo: {args.source}')
 # captura do vídeo frame a frame
 ret, frame = cap.read()
+if not ret or frame is None:
+    cap.release()
+    raise SystemExit(f'Não foi possível ler o primeiro frame: {args.source}')
 
 # inicializando o módulo de salvamento de vídeo do opencv
-cap_out = cv2.VideoWriter(video_out_path, cv2.VideoWriter_fourcc(*'MP4V'), cap.get(cv2.CAP_PROP_FPS),
+fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+cap_out = cv2.VideoWriter(args.output, cv2.VideoWriter_fourcc(*'mp4v'), fps,
                           (frame.shape[1], frame.shape[0]))
+if not cap_out.isOpened():
+    cap.release()
+    raise SystemExit(f'Não foi possível criar o arquivo de saída: {args.output}')
 
 # carregando os parâmetros pré-treinados nas arquiteturas da YOLOv8 (com e sem segmentação)
-model_seg = YOLO("modelos-salvos/yolov8n-seg.pt")
-model_without_seg = YOLO("modelos-salvos/yolov8n.pt")
+model_seg = YOLO(args.seg_model)
+model_without_seg = YOLO(args.detect_model)
 
 # inicializando o módulo de rastreamento do deep-sort
 tracker = Tracker()
@@ -39,7 +61,7 @@ tracker = Tracker()
 # variável auxiliar para adicionar o tempo de espera entre um frame e outro
 time = 1
 # variável auxiliar para adicionar o ID selecionado pelo usuário 
-id_select = 0
+id_select = -1
 # criando uma variável auxiliar para adicionar as coordenadas da caixa delimitadora selecionada
 bbox_select = list()
 # variável auxiliar para armazenar o ID de rastreamento durante a seleção
@@ -62,6 +84,7 @@ while ret:
             results = model_seg(frame, verbose = False)
         else: 
             results = model_without_seg(frame, verbose = False)
+        segmentations = None
 
         # adicionando as informações da caixa delimitadora em uma lista
         for result in results:
@@ -69,16 +92,17 @@ while ret:
             # pegando as informações do modelo da YOLO
             for index, r in enumerate(result.boxes.data.tolist()):
                 if verify_seg % 2:
-                    seg_map = result.masks.data[index].cpu().numpy()
-                    seg_map = segmentation_map_corrections(seg_map = seg_map, new_shape = frame.shape,
-                                                           color = SEGMENTATION_COLOR)
+                    if result.masks is not None:
+                        seg_map = result.masks.data[index].cpu().numpy()
+                        seg_map = segmentation_map_corrections(seg_map = seg_map, new_shape = frame.shape,
+                                                               color = SEGMENTATION_COLOR)
                 x1, y1, x2, y2, score, class_id = r
                 [x1, y1, x2, y2] = bbox_corrections(bbox = [x1, y1, x2, y2])
                 # adicionando a lista caso a detecção tenha um determinado grau de confiabilidade
                 if score > DETECTION_THRESHOLD:
                     detections.append([x1, y1, x2, y2, score])
-                    if verify_seg % 2:
-                        if index == 0: segmentations = seg_map
+                    if verify_seg % 2 and result.masks is not None:
+                        if segmentations is None: segmentations = seg_map
                         else: segmentations += seg_map
 
             # passando as informações das caixas delimitadoras no frame atual para o módulo de rastreamento
@@ -122,7 +146,7 @@ while ret:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, COLOR_ID_TEXT, 2)
         
         # coloca a máscara de segmentação caso o modelo de segmentação estiver selecionado
-        if verify_seg % 2:
+        if verify_seg % 2 and segmentations is not None:
             frame = cv2.addWeighted(frame, 0.7, segmentations.astype('uint8'), 0.3, 0)
 
     # título do projeto informado no canto da tela
